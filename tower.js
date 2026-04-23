@@ -1,60 +1,54 @@
 // ============================================================
-//  tower.js — 타워 3종 + 지정 구역에만 설치 가능
-//  타워 종류: 기본(Basic) / 저격(Sniper) / 범위(Splash)
+//  tower.js — 타워 배치 및 자동 공격
+//  ✅ 변경사항:
+//    - 타워 설치 가능 구역 3개로 고정
+//    - 구역당 최대 타워 2개
+//    - 구역 외 설치 불가
 // ============================================================
 
-// ── 설치 가능 구역 (경로 옆 잔디 구역만) ──
+// ────────────────────────────────────────
+//  타워 설치 가능 구역 3개 정의
+//  맵의 경로 옆에 배치 (경로와 겹치지 않는 위치)
+// ────────────────────────────────────────
 const TOWER_ZONES = [
-  { id: 0,  x: -16, z:  6,  w: 10, d: 5  },
-  { id: 1,  x: -16, z: -6,  w: 10, d: 5  },
-  { id: 2,  x:  -3, z:  16, w: 10, d: 5  },
-  { id: 3,  x:   3, z:   4, w: 10, d: 5  },
-  { id: 4,  x:  16, z:   3, w: 5,  d: 10 },
-  { id: 5,  x:   4, z:  -2, w: 5,  d: 10 },
-  { id: 6,  x:  16, z: -17, w: 10, d: 5  },
-  { id: 7,  x:  16, z:  -3, w: 10, d: 5  },
+  {
+    id: 0,
+    label: 'A',
+    center: new THREE.Vector3(-10, 0, -5),  // 경로 왼쪽 구역
+    size:   6,                               // 구역 한 변 크기
+    maxTowers: 2,
+    towers: [],   // 설치된 타워 목록
+  },
+  {
+    id: 1,
+    label: 'B',
+    center: new THREE.Vector3(0, 0, 3),     // 경로 중앙 구역
+    size:   6,
+    maxTowers: 2,
+    towers: [],
+  },
+  {
+    id: 2,
+    label: 'C',
+    center: new THREE.Vector3(10, 0, -3),   // 경로 오른쪽 구역
+    size:   6,
+    maxTowers: 2,
+    towers: [],
+  },
 ];
 
-// ── 타워 스탯 정의 ──
-const TOWER_STATS = {
-  basic: {
-    name:     '기본 타워',
-    color:    0x999999,
-    range:    8,
-    damage:   15,
-    fireRate: 1.2,
-    desc:     '균형잡힌 기본 타워',
-  },
-  sniper: {
-    name:     '저격 타워',
-    color:    0x4466cc,
-    range:    16,
-    damage:   40,
-    fireRate: 0.4,
-    desc:     '긴 사거리, 강한 한방',
-  },
-  splash: {
-    name:     '범위 타워',
-    color:    0xcc4422,
-    range:    6,
-    damage:   10,
-    fireRate: 0.8,
-    splashRadius: 3.5,
-    desc:     '주변 적에게 범위 피해',
-  },
-};
-
-// ============================================================
-//  Tower 클래스
-// ============================================================
+// ────────────────────────────────────────
+//  Tower 클래스 — 타워 1기
+// ────────────────────────────────────────
 class Tower {
-  constructor(scene, position, type = 'basic') {
-    this.scene    = scene;
-    this.type     = type;
-    this.stats    = TOWER_STATS[type];
-    this.isActive = true;
-    this.bullets  = [];
-    this.fireCool = 0;
+  constructor(scene, position) {
+    this.scene   = scene;
+    this.range   = 9;
+    this.damage  = 18;
+    this.fireRate= 1.4;
+    this.fireCool= 0;
+    this.isActive= true;
+    this.bullets = [];
 
     this.mesh = this._createMesh();
     this.mesh.position.copy(position);
@@ -67,173 +61,98 @@ class Tower {
     this.rangeIndicator.position.y = 0.05;
     this.scene.add(this.rangeIndicator);
     setTimeout(() => this.scene.remove(this.rangeIndicator), 3000);
+
+    console.log('[Tower] 배치 완료. 위치:', position);
   }
 
   _createMesh() {
     const group = new THREE.Group();
-    const color = this.stats.color;
 
-    // 기단 (공통)
     const base = new THREE.Mesh(
       new THREE.BoxGeometry(1.2, 0.4, 1.2),
-      new THREE.MeshLambertMaterial({ color: 0x777777 })
+      new THREE.MeshLambertMaterial({ color: 0x888888 })
     );
     base.position.y = 0.2;
     base.castShadow = true;
     group.add(base);
 
-    if (this.type === 'basic') {
-      const tower = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.45, 0.55, 2.0, 8),
-        new THREE.MeshLambertMaterial({ color })
-      );
-      tower.position.y = 1.4;
-      tower.castShadow = true;
-      group.add(tower);
-
-    } else if (this.type === 'sniper') {
-      // 가늘고 높은 탑
-      const tower = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.28, 0.38, 3.2, 6),
-        new THREE.MeshLambertMaterial({ color })
-      );
-      tower.position.y = 2.0;
-      tower.castShadow = true;
-      group.add(tower);
-
-      // 긴 포신
-      const barrel = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.07, 0.07, 1.4, 6),
-        new THREE.MeshLambertMaterial({ color: 0x222244 })
-      );
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 3.4, 0.9);
-      group.add(barrel);
-      this._barrel = barrel;
-
-    } else if (this.type === 'splash') {
-      // 넓고 낮은 탑
-      const tower = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.7, 0.85, 1.4, 6),
-        new THREE.MeshLambertMaterial({ color })
-      );
-      tower.position.y = 1.1;
-      tower.castShadow = true;
-      group.add(tower);
-
-      // 범위 링
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(this.stats.splashRadius, 0.08, 6, 24),
-        new THREE.MeshBasicMaterial({ color: 0xff6633, transparent: true, opacity: 0.35 })
-      );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.1;
-      group.add(ring);
-    }
-
-    // 포탑 머리 (공통)
-    const headY = this.type === 'sniper' ? 3.6 : this.type === 'splash' ? 1.9 : 2.65;
-    const head = new THREE.Mesh(
-      new THREE.BoxGeometry(0.7, 0.45, 0.7),
-      new THREE.MeshLambertMaterial({ color: 0x444444 })
+    const tower = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.45, 0.55, 2.0, 8),
+      new THREE.MeshLambertMaterial({ color: 0x999999 })
     );
-    head.position.y = headY;
+    tower.position.y = 1.4;
+    tower.castShadow = true;
+    group.add(tower);
+
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, 0.5, 0.7),
+      new THREE.MeshLambertMaterial({ color: 0x555555 })
+    );
+    head.position.y = 2.65;
     group.add(head);
     this._turretHead = head;
+
+    this._barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.08, 0.8, 6),
+      new THREE.MeshLambertMaterial({ color: 0x333333 })
+    );
+    this._barrel.rotation.x = Math.PI / 2;
+    this._barrel.position.set(0, 2.65, 0.7);
+    group.add(this._barrel);
 
     return group;
   }
 
   _createRangeIndicator() {
-    const colorMap = { basic: 0xffff00, sniper: 0x4466ff, splash: 0xff4422 };
-    return new THREE.Mesh(
-      new THREE.RingGeometry(this.stats.range - 0.1, this.stats.range, 32),
-      new THREE.MeshBasicMaterial({
-        color: colorMap[this.type],
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.4,
-      })
-    );
+    const geo = new THREE.RingGeometry(this.range - 0.1, this.range, 32);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffff00,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.35,
+    });
+    return new THREE.Mesh(geo, mat);
   }
 
   update(delta, enemies) {
     if (!this.isActive) return;
     this.fireCool -= delta;
 
-    const target = this._findTarget(enemies);
+    const target = this._findClosestEnemy(enemies);
     if (target) {
       const dir   = new THREE.Vector3().subVectors(target.getPosition(), this.mesh.position);
       const angle = Math.atan2(dir.x, dir.z);
       if (this._turretHead) this._turretHead.rotation.y = angle;
+      if (this._barrel)     this._barrel.rotation.y     = angle - Math.PI / 2;
 
       if (this.fireCool <= 0) {
-        this.fireCool = 1 / this.stats.fireRate;
-        this._shoot(target, enemies);
+        this.fireCool = 1 / this.fireRate;
+        this._shootAt(target);
       }
     }
 
     this._updateBullets(delta);
   }
 
-  _findTarget(enemies) {
-    let best = null, bestPath = -1;
+  _findClosestEnemy(enemies) {
+    let best = null, bestDist = Infinity;
     for (const e of enemies) {
       if (e.isDead || e.reached) continue;
-      const dist = this.mesh.position.distanceTo(e.getPosition());
-      if (dist <= this.stats.range && e.pathIndex > bestPath) {
-        bestPath = e.pathIndex;
-        best = e;
-      }
+      const d = this.mesh.position.distanceTo(e.getPosition());
+      if (d <= this.range && d < bestDist) { bestDist = d; best = e; }
     }
     return best;
   }
 
-  _shoot(target, enemies) {
-    if (this.type === 'splash') {
-      this._splashDamage(target.getPosition().clone(), enemies);
-      this._spawnSplashEffect(target.getPosition().clone());
-      return;
-    }
-
-    const color = this.type === 'sniper' ? 0x88aaff : 0xffcc00;
-    const size  = this.type === 'sniper' ? 0.12 : 0.18;
-    const mesh  = new THREE.Mesh(
-      new THREE.SphereGeometry(size, 6, 6),
-      new THREE.MeshBasicMaterial({ color })
-    );
-    const headY = this.type === 'sniper' ? 3.4 : 2.65;
-    mesh.position.copy(this.mesh.position);
-    mesh.position.y = headY;
-    this.scene.add(mesh);
-
-    this.bullets.push({
-      mesh, target,
-      speed:  this.type === 'sniper' ? 28 : 18,
-      damage: this.stats.damage,
-      active: true,
-    });
-  }
-
-  _splashDamage(center, enemies) {
-    for (const e of enemies) {
-      if (e.isDead || e.reached) continue;
-      const dist = center.distanceTo(e.getPosition());
-      if (dist <= this.stats.splashRadius) {
-        const falloff = 1 - (dist / this.stats.splashRadius) * 0.5;
-        e.takeDamage(Math.floor(this.stats.damage * falloff));
-      }
-    }
-  }
-
-  _spawnSplashEffect(position) {
+  _shootAt(enemy) {
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(this.stats.splashRadius, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff4422, transparent: true, opacity: 0.3 })
+      new THREE.SphereGeometry(0.18, 6, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffcc00 })
     );
-    mesh.position.copy(position);
+    mesh.position.copy(this.mesh.position);
+    mesh.position.y = 2.65;
     this.scene.add(mesh);
-    setTimeout(() => this.scene.remove(mesh), 200);
+    this.bullets.push({ mesh, target: enemy, speed: 18, damage: this.damage, active: true });
   }
 
   _updateBullets(delta) {
@@ -243,13 +162,13 @@ class Tower {
       if (b.target.isDead || b.target.reached) {
         this.scene.remove(b.mesh); b.active = false; continue;
       }
-      const tp = b.target.getPosition().clone();
-      tp.y = 2.0;
-      const dir  = new THREE.Vector3().subVectors(tp, b.mesh.position);
-      const dist = dir.length();
-      if (dist < 0.4) {
+      const tp  = b.target.getPosition().clone();
+      tp.y      = 2.65;
+      const dir = new THREE.Vector3().subVectors(tp, b.mesh.position);
+      if (dir.length() < 0.4) {
         b.target.takeDamage(b.damage);
-        this.scene.remove(b.mesh); b.active = false;
+        this.scene.remove(b.mesh);
+        b.active = false;
         this._spawnHitEffect(b.mesh.position.clone());
       } else {
         dir.normalize();
@@ -258,12 +177,12 @@ class Tower {
     }
   }
 
-  _spawnHitEffect(position) {
+  _spawnHitEffect(pos) {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.4, 6, 6),
       new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.9 })
     );
-    mesh.position.copy(position);
+    mesh.position.copy(pos);
     this.scene.add(mesh);
     setTimeout(() => this.scene.remove(mesh), 150);
   }
@@ -277,166 +196,200 @@ class Tower {
   }
 }
 
-// ============================================================
-//  TowerManager — 설치 구역 관리 + 배치
-// ============================================================
+// ────────────────────────────────────────
+//  TowerManager — 구역 기반 타워 관리
+// ────────────────────────────────────────
 class TowerManager {
   constructor(scene, camera, renderer) {
-    this.scene        = scene;
-    this.camera       = camera;
-    this.renderer     = renderer;
-    this.towers       = [];
-    this.active       = true;
-    this.selectedType = 'basic';
-    this.zoneMeshes   = [];
-    this.MAX_PER_ZONE = 2;
-    this.zoneCount    = {};
-    TOWER_ZONES.forEach(z => { this.zoneCount[z.id] = 0; });
+    this.scene    = scene;
+    this.camera   = camera;
+    this.renderer = renderer;
+    this.towers   = [];
+    this.active   = true;
+
+    // 구역 데이터 초기화 (재시작 시 towers 배열 비워야 함)
+    for (const z of TOWER_ZONES) z.towers = [];
+
+    // 구역 시각화 오브젝트 목록 (재시작 시 제거용)
+    this.zoneObjects = [];
+
+    // 레이캐스팅용 보이지 않는 바닥
+    this.groundPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(100, 100),
+      new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
+    );
+    this.groundPlane.rotation.x = -Math.PI / 2;
+    this.scene.add(this.groundPlane);
 
     this._raycaster = new THREE.Raycaster();
     this._mouse     = new THREE.Vector2();
 
-    this._buildZones();
+    // 구역 표시 생성
+    this._buildZoneIndicators();
     this._registerEvents();
   }
 
-  // ── 설치 구역 시각화 (반투명 녹색) ──
-  _buildZones() {
+  // ────────────────────────────────────────
+  //  구역 표시 — 바닥에 사각형 + 라벨 표시
+  // ────────────────────────────────────────
+  _buildZoneIndicators() {
     for (const zone of TOWER_ZONES) {
-      // 구역 바닥면
-      const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(zone.w, zone.d),
-        new THREE.MeshBasicMaterial({
-          color: 0x44ff88,
-          transparent: true,
-          opacity: 0.18,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        })
-      );
+      // 구역 바닥 (반투명 사각형)
+      const geo  = new THREE.PlaneGeometry(zone.size, zone.size);
+      const mat  = new THREE.MeshBasicMaterial({
+        color: 0x00ccff,
+        transparent: true,
+        opacity: 0.18,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(zone.x, 0.03, zone.z);
-      mesh.userData.zoneId   = zone.id;
-      mesh.userData.zoneData = zone;
+      mesh.position.set(zone.center.x, 0.03, zone.center.z);
       this.scene.add(mesh);
-      this.zoneMeshes.push(mesh);
+      this.zoneObjects.push(mesh);
+      zone._planeMesh = mesh; // 나중에 색상 업데이트용
 
       // 구역 테두리
-      const border = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.PlaneGeometry(zone.w, zone.d)),
-        new THREE.LineBasicMaterial({ color: 0x44ff88, transparent: true, opacity: 0.55 })
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.PlaneGeometry(zone.size, zone.size)),
+        new THREE.LineBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.6 })
       );
-      border.rotation.x = -Math.PI / 2;
-      border.position.set(zone.x, 0.04, zone.z);
-      this.scene.add(border);
-      this.zoneMeshes.push(border);
+      edges.rotation.x = -Math.PI / 2;
+      edges.position.set(zone.center.x, 0.04, zone.center.z);
+      this.scene.add(edges);
+      this.zoneObjects.push(edges);
+      zone._edgeMesh = edges;
+
+      // 구역 라벨용 작은 기둥
+      const labelPost = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.15, 0.15, 0.5, 6),
+        new THREE.MeshLambertMaterial({ color: 0x00aacc })
+      );
+      labelPost.position.set(zone.center.x, 0.25, zone.center.z);
+      this.scene.add(labelPost);
+      this.zoneObjects.push(labelPost);
     }
+    console.log('[TowerManager] 구역 3개 생성 완료');
   }
 
-  _registerEvents() {
-    window.addEventListener('click', (e) => {
-      if (!this.active) return;
-      // 타워 선택 UI 클릭은 무시
-      if (e.target.closest('#tower-select')) return;
+  // 구역 색상 업데이트 (가득 차면 빨간색)
+  _updateZoneColor(zone) {
+    if (!zone._planeMesh) return;
+    const full  = zone.towers.length >= zone.maxTowers;
+    const color = full ? 0xff2200 : 0x00ccff;
+    zone._planeMesh.material.color.setHex(color);
+    if (zone._edgeMesh) zone._edgeMesh.material.color.setHex(color);
+  }
 
-      const rect = this.renderer.domElement.getBoundingClientRect();
+  // ────────────────────────────────────────
+  //  이벤트 등록
+  // ────────────────────────────────────────
+  _registerEvents() {
+    // 마우스 이동 — 위치 추적
+    window.addEventListener('mousemove', (e) => {
+      const rect   = this.renderer.domElement.getBoundingClientRect();
       this._mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
       this._mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-      this._tryPlace();
     });
-  }
 
-  _tryPlace() {
-    this._raycaster.setFromCamera(this._mouse, this.camera);
-    const planeMeshes = this.zoneMeshes.filter(m => m.type === 'Mesh');
-    const hits = this._raycaster.intersectObjects(planeMeshes);
+    // 클릭 — 구역 안이면 타워 설치
+    window.addEventListener('click', (e) => {
+      if (!this.active) return;
+      const pos = this._getGroundPosition();
+      if (!pos) return;
 
-    if (hits.length === 0) {
-      this._showMsg('⚠ 초록색 구역에만 설치할 수 있어요!');
-      return;
-    }
-
-    const hit    = hits[0];
-    const zoneId = hit.object.userData.zoneId;
-
-    if (this.zoneCount[zoneId] >= this.MAX_PER_ZONE) {
-      this._showMsg(`⚠ 이 구역은 최대 ${this.MAX_PER_ZONE}개까지만 설치 가능해요!`);
-      return;
-    }
-
-    const pos = hit.point.clone();
-    pos.y = 0;
-
-    // 너무 가까운 타워 확인
-    for (const t of this.towers) {
-      if (t.mesh.position.distanceTo(pos) < 2.0) {
-        this._showMsg('⚠ 다른 타워와 너무 가깝습니다!');
+      // 어느 구역 안에 클릭했는지 확인
+      const zone = this._findZoneAt(pos);
+      if (!zone) {
+        console.log('[TowerManager] 구역 밖 클릭 — 설치 불가');
+        this._showMessage('⚠ 파란 구역 안에만 타워를 설치할 수 있습니다!');
         return;
       }
-    }
 
-    const tower = new Tower(this.scene, pos, this.selectedType);
-    this.towers.push(tower);
-    this.zoneCount[zoneId]++;
+      if (zone.towers.length >= zone.maxTowers) {
+        console.log('[TowerManager] 구역 가득 참 — 설치 불가');
+        this._showMessage(`⚠ 구역 ${zone.label} 은 이미 가득 찼습니다! (최대 ${zone.maxTowers}개)`);
+        return;
+      }
 
-    // 구역 꽉 차면 빨간색으로
-    if (this.zoneCount[zoneId] >= this.MAX_PER_ZONE) {
-      hit.object.material.color.setHex(0xff4444);
-      hit.object.material.opacity = 0.12;
-    }
-
-    this._showMsg(`✅ ${TOWER_STATS[this.selectedType].name} 설치 완료!`);
-  }
-
-  selectType(type) {
-    this.selectedType = type;
-    document.querySelectorAll('.tower-btn').forEach(btn => {
-      btn.classList.toggle('selected', btn.dataset.type === type);
+      // 타워 설치
+      this._placeTower(pos, zone);
     });
+
+    // 우클릭 컨텍스트 메뉴 막기
+    this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  _showMsg(text) {
-    let el = document.getElementById('place-msg');
+  // 마우스 위치 → 3D 바닥 좌표
+  _getGroundPosition() {
+    this._raycaster.setFromCamera(this._mouse, this.camera);
+    const hits = this._raycaster.intersectObject(this.groundPlane);
+    return hits.length > 0 ? hits[0].point : null;
+  }
+
+  // 클릭 위치가 어느 구역 안에 있는지 반환 (없으면 null)
+  _findZoneAt(pos) {
+    for (const zone of TOWER_ZONES) {
+      const half = zone.size / 2;
+      const dx   = Math.abs(pos.x - zone.center.x);
+      const dz   = Math.abs(pos.z - zone.center.z);
+      if (dx <= half && dz <= half) return zone;
+    }
+    return null;
+  }
+
+  // 타워 설치
+  _placeTower(position, zone) {
+    const tower = new Tower(this.scene, position);
+    this.towers.push(tower);
+    zone.towers.push(tower);
+    this._updateZoneColor(zone);
+    console.log(`[TowerManager] 구역 ${zone.label} 에 타워 설치! (${zone.towers.length}/${zone.maxTowers})`);
+  }
+
+  // 화면 중앙에 안내 메시지 표시
+  _showMessage(text) {
+    let el = document.getElementById('zone-message');
     if (!el) {
       el = document.createElement('div');
-      el.id = 'place-msg';
+      el.id = 'zone-message';
       el.style.cssText = `
-        position:fixed;bottom:70px;left:50%;
-        transform:translateX(-50%);
-        background:rgba(10,10,20,0.9);
-        border:1px solid rgba(255,180,60,0.4);
-        padding:8px 24px;border-radius:6px;
-        font-family:'Courier New',monospace;
-        font-size:13px;color:#ffe08a;
-        letter-spacing:1px;z-index:20;
-        pointer-events:none;transition:opacity 0.3s;
+        position:fixed; top:50%; left:50%;
+        transform:translate(-50%,-50%);
+        background:rgba(0,0,0,0.8);
+        color:#ffcc00; font-family:'Courier New',monospace;
+        font-size:15px; letter-spacing:1px;
+        padding:12px 24px; border-radius:6px;
+        border:1px solid rgba(255,200,0,0.4);
+        z-index:30; pointer-events:none;
+        opacity:0; transition:opacity 0.2s;
       `;
       document.body.appendChild(el);
     }
-    el.textContent  = text;
+    el.textContent = text;
     el.style.opacity = '1';
     clearTimeout(this._msgTimer);
-    this._msgTimer = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+    this._msgTimer = setTimeout(() => { el.style.opacity = '0'; }, 2000);
   }
 
+  // 매 프레임 업데이트
   update(delta, enemies) {
-    for (const t of this.towers) t.update(delta, enemies);
+    for (const tower of this.towers) {
+      tower.update(delta, enemies);
+    }
   }
 
-  // 스테이지 전환 시 구역 카운트만 리셋 (타워는 유지)
-  resetZones() {
-    TOWER_ZONES.forEach(z => { this.zoneCount[z.id] = 0; });
-    this.zoneMeshes.filter(m => m.type === 'Mesh').forEach(m => {
-      m.material.color.setHex(0x44ff88);
-      m.material.opacity = 0.18;
-    });
-  }
-
+  // 전체 초기화 (재시작)
   clearAll() {
     for (const t of this.towers) t.destroy();
     this.towers = [];
-    for (const m of this.zoneMeshes) this.scene.remove(m);
-    this.zoneMeshes = [];
-    TOWER_ZONES.forEach(z => { this.zoneCount[z.id] = 0; });
+
+    for (const obj of this.zoneObjects) this.scene.remove(obj);
+    this.zoneObjects = [];
+
+    for (const z of TOWER_ZONES) z.towers = [];
+
+    // 구역 다시 표시
+    this._buildZoneIndicators();
   }
 }
