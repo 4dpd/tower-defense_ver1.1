@@ -1,200 +1,110 @@
 // ============================================================
-//  game.js — 30스테이지 시스템
-//  스테이지마다 적 HP/속도/소환간격이 점점 강해짐
-//  10스테이지마다 보스 웨이브 (HP 3배)
+//  game.js — 게임 전체 상태 관리 (웨이브 시스템 포함)
+//  ✅ 변경사항:
+//    - 타이머 제거 → 웨이브 3개 클리어 시 승리
+//    - 웨이브 진행 UI 추가
+//    - 난이도 상승 반영
 // ============================================================
 
-// ── 30스테이지 설정 자동 생성 함수 ──
-function buildStageConfigs() {
-  const configs = [];
-
-  for (let s = 1; s <= 30; s++) {
-    // 난이도 점진적 상승 공식
-    const progress   = (s - 1) / 29;          // 0.0 ~ 1.0
-    const isBoss     = s % 10 === 0;           // 10, 20, 30스테이지는 보스
-
-    // 소환 간격: 3.5초(1스테이지) → 1.2초(30스테이지)
-    const spawnRate  = Math.max(1.2, 3.5 - progress * 2.3);
-
-    // 적 HP: 50(1스테이지) → 400(30스테이지), 보스는 3배
-    const baseHp     = Math.floor(50 + progress * 350);
-    const enemyHp    = isBoss ? baseHp * 3 : baseHp;
-
-    // 적 속도: 4.0(1스테이지) → 7.5(30스테이지)
-    const enemySpeed = parseFloat((4.0 + progress * 3.5).toFixed(1));
-
-    // 스테이지 시간: 1~9스테이지 90초, 10스테이지마다 120초(보스)
-    const duration   = isBoss ? 120 : 90;
-
-    configs.push({
-      stage:      s,
-      duration,
-      spawnRate:  parseFloat(spawnRate.toFixed(2)),
-      enemyHp,
-      enemySpeed,
-      isBoss,
-      title:      isBoss ? `⚠ BOSS WAVE ${s}` : `STAGE ${s}`,
-      desc:       isBoss
-        ? `강력한 보스 좀비 출현! HP ${enemyHp}`
-        : `적 HP ${enemyHp} | 속도 ${enemySpeed}`,
-    });
-  }
-
-  return configs;
-}
-
-// 전역 스테이지 설정 배열 (30개)
-const STAGE_CONFIG = buildStageConfigs();
-
-// ============================================================
-//  GameManager
-// ============================================================
 class GameManager {
   constructor(scene, camera, renderer) {
     this.scene    = scene;
     this.camera   = camera;
     this.renderer = renderer;
 
-    // ── 스테이지 상태 ──
-    this.currentStageIdx = 0;
-    this.MAX_STAGES      = STAGE_CONFIG.length; // 30
-
-    // ── 게임 상태 ──
     this.MAX_CASTLE_HP = 100;
-    this.castleHp      = this.MAX_CASTLE_HP;
-    this.timeLeft      = STAGE_CONFIG[0].duration;
-    this.killCount     = 0;      // 현재 스테이지 처치 수
-    this.totalKills    = 0;      // 전체 누적 처치 수
-    this.isGameOver    = false;
-    this.isStageClear  = false;
-    this.finalScore    = 0;
 
-    // ── UI 요소 ──
-    this.elCastleHpValue   = document.getElementById('castle-hp-value');
-    this.elCastleHpBar     = document.getElementById('castle-hp-bar');
-    this.elTimerDisplay    = document.getElementById('timer-display');
-    this.elKillCount       = document.getElementById('kill-count');
-    this.elStageDisplay    = document.getElementById('stage-display');
-    this.elOverlay         = document.getElementById('overlay');
-    this.elOverlayTitle    = document.getElementById('overlay-title');
-    this.elOverlaySub      = document.getElementById('overlay-sub');
-    this.elOverlayScore    = document.getElementById('overlay-score');
-    this.elOverlayRank     = document.getElementById('overlay-rank');
-    this.elRankingList     = document.getElementById('ranking-list');
-    this.elWaveBanner      = document.getElementById('wave-banner');
-    this.elApiStatus       = document.getElementById('api-status');
-    this.elStageClearBanner= document.getElementById('stage-clear-banner');
+    // 게임 상태
+    this.castleHp   = this.MAX_CASTLE_HP;
+    this.killCount  = 0;
+    this.isGameOver = false;
+    this.isWin      = false;
+    this.finalScore = 0;
+    this.gameTime   = 0;  // 경과 시간
+
+    // UI 요소
+    this.elCastleHpValue = document.getElementById('castle-hp-value');
+    this.elCastleHpBar   = document.getElementById('castle-hp-bar');
+    this.elTimerDisplay  = document.getElementById('timer-display');
+    this.elKillCount     = document.getElementById('kill-count');
+    this.elOverlay       = document.getElementById('overlay');
+    this.elOverlayTitle  = document.getElementById('overlay-title');
+    this.elOverlaySub    = document.getElementById('overlay-sub');
+    this.elOverlayScore  = document.getElementById('overlay-score');
+    this.elOverlayRank   = document.getElementById('overlay-rank');
+    this.elRankingList   = document.getElementById('ranking-list');
+    this.elWaveBanner    = document.getElementById('wave-banner');
+    this.elApiStatus     = document.getElementById('api-status');
 
     this.mapObjects = [];
 
-    // ── 서브 시스템 초기화 ──
+    // 서브 시스템 초기화
     this._buildMap();
     this._buildCastle();
     this._buildLights();
-    this.player   = new Player(scene);
-    this.towerMgr = new TowerManager(scene, camera, renderer);
-    this.spawner  = this._createSpawner();
 
-    this._checkApiStatus();
-    this._updateStageUI();
-    this._showWaveBanner(this.stageConfig.title, this.stageConfig.desc);
+    this.player = new Player(scene);
 
-    console.log('[GameManager] 게임 시작! 총 스테이지:', this.MAX_STAGES);
-    console.log('[GameManager] 스테이지 설정 미리보기:',
-      STAGE_CONFIG.map(c => `S${c.stage}(HP:${c.enemyHp} 속:${c.enemySpeed})`).join(', ')
-    );
-  }
-
-  // ── 현재 스테이지 설정 ──
-  get stageConfig() {
-    return STAGE_CONFIG[this.currentStageIdx];
-  }
-
-  // ── 스폰너 생성 ──
-  _createSpawner() {
-    const cfg = this.stageConfig;
-    return new EnemySpawner(
-      this.scene,
+    // 적 소환기 — 웨이브 변경 콜백 포함
+    this.spawner = new EnemySpawner(
+      scene,
       (dmg) => this._onEnemyReachedCastle(dmg),
       ()    => this._onEnemyKilled(),
-      cfg.spawnRate,
-      cfg.enemyHp,
-      cfg.enemySpeed,
+      (waveEvent) => this._onWaveChange(waveEvent)
     );
-  }
 
-  // ── 스테이지 HUD 업데이트 ──
-  _updateStageUI() {
-    if (this.elStageDisplay) {
-      const cfg = this.stageConfig;
-      // 보스 스테이지는 빨간색
-      this.elStageDisplay.textContent = cfg.title;
-      this.elStageDisplay.style.color = cfg.isBoss ? '#ff4444' : '#ffe08a';
-    }
-    this.killCount = 0;
-    this.elKillCount.textContent = '0';
-    this.elTimerDisplay.classList.remove('danger');
-    this.elTimerDisplay.style.color = '';
+    this.towerMgr = new TowerManager(scene, camera, renderer);
+
+    this._checkApiStatus();
+    this._updateWaveUI(1);
+    this._showWaveBanner('⚔ 웨이브 1 시작! 좀비가 몰려온다!');
+
+    console.log('[GameManager] 게임 시작! (웨이브 3개 클리어 시 승리)');
   }
 
   // ────────────────────────────────────────
-  //  스테이지 클리어 → 다음 스테이지
+  //  웨이브 이벤트 처리
   // ────────────────────────────────────────
-  async _stageClear() {
-    if (this.isStageClear || this.isGameOver) return;
-    this.isStageClear = true;
+  _onWaveChange(event) {
+    if (event === 'clear') {
+      // 웨이브 클리어 → 다음 웨이브 예고
+      const nextWave = this.spawner.currentWave;
+      this._showWaveBanner(`✅ 웨이브 클리어! ${this.spawner.BETWEEN_WAIT}초 후 웨이브 ${nextWave} 시작...`);
+      this._updateWaveUI(nextWave);
+      console.log(`[GameManager] 웨이브 클리어! 다음: ${nextWave}`);
 
-    const clearedStage = this.stageConfig.stage;
-    console.log(`[GameManager] 스테이지 ${clearedStage} 클리어!`);
-
-    // ── 30스테이지 클리어 = 최종 승리 ──
-    if (this.currentStageIdx >= this.MAX_STAGES - 1) {
+    } else if (event === 'allClear') {
+      // 전체 웨이브 클리어 → 승리
+      console.log('[GameManager] 전체 웨이브 클리어! 승리!');
       this._endGame(true);
-      return;
+
+    } else if (typeof event === 'number') {
+      // 새 웨이브 시작
+      this._showWaveBanner(`🔥 웨이브 ${event} 시작!`);
+      this._updateWaveUI(event);
     }
-
-    // ── 스테이지 클리어 배너 표시 ──
-    this._showStageClearBanner(clearedStage);
-
-    // 스폰 중지
-    this.spawner.active = false;
-
-    // 5초 대기
-    await this._wait(5000);
-
-    // 다음 스테이지로 전환
-    this.currentStageIdx++;
-    this.timeLeft     = this.stageConfig.duration;
-    this.isStageClear = false;
-
-    // 기존 적 모두 제거
-    this.spawner.clearAll();
-
-    // 새 스폰너 (더 강한 적)
-    this.spawner = this._createSpawner();
-
-    // 타워 유지, 구역 카운트만 리셋
-    this.towerMgr.resetZones();
-
-    this._updateStageUI();
-    this._showWaveBanner(this.stageConfig.title, this.stageConfig.desc);
-
-    console.log(`[GameManager] 스테이지 ${this.stageConfig.stage} 시작! HP:${this.stageConfig.enemyHp} 속도:${this.stageConfig.enemySpeed}`);
   }
 
-  // ── 스테이지 클리어 배너 ──
-  _showStageClearBanner(stageNum) {
-    if (!this.elStageClearBanner) return;
-    const isBoss = stageNum % 10 === 0;
-    this.elStageClearBanner.innerHTML = isBoss
-      ? `🎉 BOSS WAVE ${stageNum} 클리어! &nbsp;|&nbsp; 다음 스테이지까지 5초...`
-      : `✨ STAGE ${stageNum} 클리어! &nbsp;|&nbsp; 다음 스테이지까지 5초...`;
-    this.elStageClearBanner.classList.add('show');
-    setTimeout(() => this.elStageClearBanner.classList.remove('show'), 4800);
+  // 웨이브 UI 업데이트 (타이머 자리에 웨이브 표시)
+  _updateWaveUI(wave) {
+    const total = this.spawner?.totalWaves || 3;
+    this.elTimerDisplay.textContent = `${wave} / ${total}`;
   }
 
-  _wait(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  // ────────────────────────────────────────
+  //  API 상태 확인
+  // ────────────────────────────────────────
+  async _checkApiStatus() {
+    if (!window.api) return;
+    if (window.api.isConfigured) {
+      this.elApiStatus.textContent = '● 서버 확인 중...';
+      const ok = await window.api.ping();
+      this.elApiStatus.textContent = ok ? '● 구글 시트 연결됨' : '● 서버 오류 (로컬 모드)';
+      this.elApiStatus.className   = ok ? 'connected' : 'local';
+    } else {
+      this.elApiStatus.textContent = '● 로컬 저장 모드';
+      this.elApiStatus.className   = 'local';
+    }
   }
 
   // ────────────────────────────────────────
@@ -213,13 +123,14 @@ class GameManager {
 
     // 경로
     const pathMat = new THREE.MeshLambertMaterial({ color: 0xb8a070 });
-    for (const p of [
+    const paths = [
       { x: -16, z:  0,  w: 14, d: 3 },
       { x: -10, z:  5,  w:  3, d: 10 },
       { x:   0, z: 10,  w: 23, d: 3 },
       { x:  10, z:  0,  w:  3, d: 23 },
       { x:  16, z: -10, w: 14, d: 3 },
-    ]) {
+    ];
+    for (const p of paths) {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.d), pathMat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(p.x, 0.02, p.z);
@@ -229,6 +140,7 @@ class GameManager {
     }
 
     this._plantTrees();
+    console.log('[GameManager] 맵 생성 완료');
   }
 
   _plantTrees() {
@@ -276,6 +188,7 @@ class GameManager {
       t.castShadow = true;
       group.add(t);
     }
+
     group.position.set(22, 0, -10);
     this.scene.add(group);
     this.castleMesh = group;
@@ -288,14 +201,14 @@ class GameManager {
     sun.position.set(15, 30, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.width = sun.shadow.mapSize.height = 2048;
-    sun.shadow.camera.left   = -35; sun.shadow.camera.right  = 35;
-    sun.shadow.camera.bottom = -35; sun.shadow.camera.top    = 35;
-    sun.shadow.camera.far    = 80;
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -35;
+    sun.shadow.camera.right = sun.shadow.camera.top   =  35;
+    sun.shadow.camera.far   = 80;
     this.scene.add(sun);
   }
 
   // ────────────────────────────────────────
-  //  콜백
+  //  성 피격
   // ────────────────────────────────────────
   _onEnemyReachedCastle(damage) {
     if (this.isGameOver) return;
@@ -308,7 +221,6 @@ class GameManager {
 
   _onEnemyKilled() {
     this.killCount++;
-    this.totalKills++;
     this.elKillCount.textContent = this.killCount;
   }
 
@@ -332,12 +244,10 @@ class GameManager {
     }
   }
 
-  _showWaveBanner(title, sub) {
-    this.elWaveBanner.innerHTML =
-      `<span style="font-size:17px;font-weight:bold">${title}</span>` +
-      `<br><span style="font-size:11px;opacity:0.7">${sub}</span>`;
+  _showWaveBanner(text) {
+    this.elWaveBanner.textContent = text;
     this.elWaveBanner.classList.add('show');
-    setTimeout(() => this.elWaveBanner.classList.remove('show'), 3200);
+    setTimeout(() => this.elWaveBanner.classList.remove('show'), 3000);
   }
 
   // ────────────────────────────────────────
@@ -346,20 +256,19 @@ class GameManager {
   async _endGame(isWin) {
     if (this.isGameOver) return;
     this.isGameOver = true;
+    this.isWin      = isWin;
     this.spawner.active = false;
 
-    const survivedTime  = this.stageConfig.duration - Math.max(0, this.timeLeft);
-    this.finalScore     = GameAPI.calcScore(this.totalKills, this.timeLeft, isWin);
+    this.finalScore = GameAPI.calcScore(this.killCount, 0, isWin);
 
     if (isWin) {
-      this.elOverlayTitle.textContent = '🏆 전설의 수호자!';
+      this.elOverlayTitle.textContent = '🏆 승리!';
       this.elOverlayTitle.className   = 'win';
-      this.elOverlaySub.textContent   = `30스테이지 완전 클리어! 총 처치: ${this.totalKills}`;
+      this.elOverlaySub.textContent   = `웨이브 3개 완료! 처치: ${this.killCount}`;
     } else {
       this.elOverlayTitle.textContent = '💀 패배';
       this.elOverlayTitle.className   = 'lose';
-      this.elOverlaySub.textContent   =
-        `스테이지 ${this.stageConfig.stage}에서 함락 | 총 처치: ${this.totalKills}`;
+      this.elOverlaySub.textContent   = `성이 함락되었습니다. 처치: ${this.killCount}`;
     }
 
     this.elOverlayScore.textContent = `${this.finalScore.toLocaleString()} 점`;
@@ -368,29 +277,32 @@ class GameManager {
     const nickname = window.playerNickname || '익명의 용사';
     await this.loadAndShowRanking(nickname, {
       score:  this.finalScore,
-      kills:  this.totalKills,
-      result: isWin ? '승리' : `${this.stageConfig.stage}스테이지 패배`,
-      time:   Math.floor(survivedTime),
+      kills:  this.killCount,
+      result: isWin ? '승리' : '패배',
+      time:   Math.floor(this.gameTime),
     });
   }
 
-  // ── 랭킹 저장/표시 ──
+  // ────────────────────────────────────────
+  //  랭킹 로드 + 표시
+  // ────────────────────────────────────────
   async loadAndShowRanking(nickname, scoreData) {
     this.elRankingList.innerHTML = '<div id="ranking-loading">랭킹 불러오는 중...</div>';
     this.elOverlayRank.textContent = '전체 순위: 집계 중...';
+
     let myRank = null;
     try {
       if (scoreData && window.api) {
-        const r = await window.api.saveScore(
+        const res = await window.api.saveScore(
           nickname, scoreData.score, scoreData.kills, scoreData.result, scoreData.time
         );
-        myRank = r?.rank ?? null;
+        myRank = res?.rank ?? null;
       }
       const ranking = window.api ? await window.api.getRanking(10) : [];
       if (myRank !== null) this.elOverlayRank.textContent = `전체 순위: ${myRank}위`;
       this._renderRankingTable(ranking, nickname, scoreData?.score ?? null);
     } catch (err) {
-      console.error('[GameManager] 랭킹 오류:', err);
+      console.error('[GameManager] 랭킹 처리 실패:', err);
       this.elRankingList.innerHTML = '<div id="ranking-loading">랭킹을 불러올 수 없습니다</div>';
     }
   }
@@ -400,55 +312,30 @@ class GameManager {
       this.elRankingList.innerHTML = '<div id="ranking-loading">아직 기록이 없습니다</div>';
       return;
     }
-    const rows = ranking.map((entry, idx) => {
-      const isMe      = entry.nickname === myNickname && entry.score === myScore;
-      const topClass  = idx < 3 ? 'top' : '';
-      const meClass   = isMe ? 'me' : '';
-      const resultCls = entry.result?.includes('승리') ? 'win' : 'lose';
-      const medal     = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx+1}`;
-      return `
-        <div class="rank-row ${meClass}">
-          <span class="rank-num ${topClass}">${medal}</span>
-          <span class="rank-name">${isMe ? '▶ ' : ''}${entry.nickname}</span>
-          <span class="rank-score">${Number(entry.score).toLocaleString()}</span>
-          <span class="rank-badge ${resultCls}">${entry.result}</span>
-        </div>`;
+    const rows = ranking.map((e, i) => {
+      const isMe     = e.nickname === myNickname && e.score === myScore;
+      const medal    = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`;
+      const resCls   = e.result === '승리' ? 'win' : 'lose';
+      return `<div class="rank-row ${isMe ? 'me' : ''}">
+        <span class="rank-num ${i < 3 ? 'top' : ''}">${medal}</span>
+        <span class="rank-name">${isMe ? '▶ ' : ''}${e.nickname}</span>
+        <span class="rank-score">${Number(e.score).toLocaleString()}</span>
+        <span class="rank-badge ${resCls}">${e.result}</span>
+      </div>`;
     });
     this.elRankingList.innerHTML = rows.join('');
-  }
-
-  async _checkApiStatus() {
-    if (!window.api) return;
-    if (window.api.isConfigured) {
-      this.elApiStatus.textContent = '● 서버 확인 중...';
-      const ok = await window.api.ping();
-      this.elApiStatus.textContent = ok ? '● 구글 시트 연결됨' : '● 서버 오류 (로컬 모드)';
-      this.elApiStatus.className   = ok ? 'connected' : 'local';
-    } else {
-      this.elApiStatus.textContent = '● 로컬 저장 모드';
-      this.elApiStatus.className   = 'local';
-    }
   }
 
   // ────────────────────────────────────────
   //  매 프레임 업데이트
   // ────────────────────────────────────────
   update(delta) {
-    if (this.isGameOver || this.isStageClear) return;
+    if (this.isGameOver) return;
 
-    // 타이머
-    this.timeLeft -= delta;
-    const t    = Math.max(0, this.timeLeft);
-    const mins = Math.floor(t / 60);
-    const secs = Math.floor(t % 60);
-    this.elTimerDisplay.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
-    if (t <= 20) this.elTimerDisplay.classList.add('danger');
+    this.gameTime += delta;
 
-    // 시간 초과 → 스테이지 클리어
-    if (this.timeLeft <= 0) {
-      this._stageClear();
-      return;
-    }
+    // 웨이브 UI는 spawner에서 콜백으로 업데이트
+    // (타이머 대신 웨이브 진행 표시)
 
     this.player.update(delta);
     this.spawner.update(delta, this.camera);
@@ -462,34 +349,40 @@ class GameManager {
     this.player.destroy();
     this.spawner.clearAll();
     this.towerMgr.clearAll();
+
     for (const obj of this.mapObjects) this.scene.remove(obj);
     this.mapObjects = [];
 
     this.elOverlay.classList.remove('visible');
-    this.elTimerDisplay.classList.remove('danger');
     this.elCastleHpBar.style.width = '100%';
     this.elCastleHpBar.style.background = '';
 
-    this.currentStageIdx = 0;
-    this.castleHp        = this.MAX_CASTLE_HP;
-    this.timeLeft        = STAGE_CONFIG[0].duration;
-    this.killCount       = 0;
-    this.totalKills      = 0;
-    this.isGameOver      = false;
-    this.isStageClear    = false;
-    this.finalScore      = 0;
+    this.castleHp   = this.MAX_CASTLE_HP;
+    this.killCount  = 0;
+    this.isGameOver = false;
+    this.isWin      = false;
+    this.finalScore = 0;
+    this.gameTime   = 0;
 
     this._updateHpUI();
+    this.elKillCount.textContent = '0';
 
     this._buildMap();
     this._buildCastle();
     this._buildLights();
-    this.player   = new Player(this.scene);
-    this.towerMgr = new TowerManager(this.scene, this.camera, this.renderer);
-    this.spawner  = this._createSpawner();
 
-    this._updateStageUI();
-    this._showWaveBanner(STAGE_CONFIG[0].title, STAGE_CONFIG[0].desc);
+    this.player = new Player(this.scene);
+    this.spawner = new EnemySpawner(
+      this.scene,
+      (dmg)       => this._onEnemyReachedCastle(dmg),
+      ()          => this._onEnemyKilled(),
+      (waveEvent) => this._onWaveChange(waveEvent)
+    );
+    this.spawner.active  = true;
+    this.towerMgr.active = true;
+
+    this._updateWaveUI(1);
+    this._showWaveBanner('⚔ 웨이브 1 시작!');
     console.log('[GameManager] 재시작 완료');
   }
 }
