@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>막아라 타워 디펜스</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+
+    body {
+      background: #0a0a0f;
+      font-family: 'Courier New', Courier, monospace;
+      overflow: hidden;
+      color: #e8e0d0;
+    }
+
+    #game-container {
+      position: fixed; top:0; left:0;
+      width:100%; height:100%;
+    }
+
+    /* ── HUD 상단 ── */
+    #hud {
+      position: fixed; top:0; left:0; right:0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 14px 20px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .hud-panel {
+      background: rgba(10,10,20,0.82);
+      border: 1px solid rgba(255,180,60,0.32);
+      border-radius: 6px;
+      padding: 9px 14px;
+      backdrop-filter: blur(6px);
+    }
+
+    .hud-label {
+      font-size: 10px; letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255,180,60,0.65);
+      margin-bottom: 3px;
+    }
+
+    .hud-value { font-size: 20px; font-weight: bold; color: #ffe08a; }
+
+    #castle-hp-bar-wrap {
+      width: 150px; height: 7px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px; margin-top: 5px; overflow: hidden;
+    }
+
+    #castle-hp-bar {
+      height: 100%; width: 100%;
+      background: linear-gradient(90deg, #ff4444, #ff8844);
+      border-radius: 4px; transition: width 0.3s ease;
+    }
+
+    #hud-center { text-align: center; }
+
+    /* 스테이지 표시 */
+    #stage-display {
+      font-size: 12px; letter-spacing: 3px;
+      color: #ffe08a; margin-bottom: 2px;
+    }
+
+    #timer-display {
+      font-size: 34px; color: #ffe08a; letter-spacing: 4px;
+    }
+
+    #timer-display.danger {
+      color: #ff4444;
+      animation: blink 0.6s infinite alternate;
+    }
+
+    @keyframes blink { from{opacity:1} to{opacity:0.3} }
+
+    /* ── 타워 선택 UI (하단 중앙) ── */
+    #tower-select {
+      position: fixed;
+      bottom: 20px; left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 15;
+      pointer-events: all;
+    }
+
+    .tower-btn {
+      background: rgba(10,10,20,0.88);
+      border: 1px solid rgba(255,180,60,0.3);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-family: inherit;
+      font-size: 12px;
+      color: rgba(255,224,138,0.6);
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 1px;
+      text-align: center;
+      min-width: 90px;
+    }
+
+    .tower-btn:hover {
+      border-color: rgba(255,180,60,0.7);
+      color: #ffe08a;
+    }
+
+    /* 선택된 타워 버튼 강조 */
+    .tower-btn.selected {
+      border-color: #ffe08a;
+      color: #ffe08a;
+      background: rgba(255,224,138,0.1);
+      box-shadow: 0 0 12px rgba(255,224,138,0.2);
+    }
+
+    .tower-btn .btn-name {
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 3px;
+    }
+
+    .tower-btn .btn-desc {
+      font-size: 10px;
+      opacity: 0.6;
+      letter-spacing: 0;
+    }
+
+    .tower-btn.basic.selected   { border-color: #aaaaaa; color: #cccccc; }
+    .tower-btn.sniper.selected  { border-color: #4466ff; color: #88aaff; }
+    .tower-btn.splash.selected  { border-color: #ff4422; color: #ff8866; }
+
+    /* ── 닉네임 입력 시작 화면 ── */
+    #nickname-screen {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 100%);
+      z-index: 100;
+    }
+
+    #nickname-screen h1 {
+      font-size: 52px; color: #ffe08a;
+      letter-spacing: 6px; margin-bottom: 4px;
+      text-shadow: 0 0 30px rgba(255,224,138,0.45);
+    }
+
+    .sub-title {
+      font-size: 11px; color: rgba(255,255,255,0.28);
+      letter-spacing: 4px; margin-bottom: 8px;
+    }
+
+    .stage-info {
+      font-size: 12px; color: rgba(255,180,60,0.5);
+      letter-spacing: 2px; margin-bottom: 44px;
+    }
+
+    #nickname-input {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,180,60,0.45);
+      border-radius: 4px;
+      padding: 13px 22px;
+      font-family: inherit; font-size: 20px;
+      color: #ffe08a; text-align: center;
+      outline: none; width: 300px;
+      margin-bottom: 18px; letter-spacing: 2px;
+    }
+
+    #nickname-input::placeholder { color: rgba(255,224,138,0.22); }
+    #nickname-input:focus {
+      border-color: #ffe08a;
+      box-shadow: 0 0 18px rgba(255,224,138,0.1);
+    }
+
+    #start-btn {
+      padding: 13px 60px;
+      background: transparent;
+      border: 2px solid #ffe08a;
+      color: #ffe08a; font-family: inherit;
+      font-size: 15px; letter-spacing: 4px;
+      cursor: pointer; transition: all 0.2s;
+    }
+
+    #start-btn:hover { background: #ffe08a; color: #0a0a0f; }
+
+    /* ── 스테이지 클리어 배너 (중앙) ── */
+    #stage-clear-banner {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(10,10,20,0.94);
+      border: 1px solid rgba(255,224,138,0.5);
+      border-radius: 10px;
+      padding: 20px 48px;
+      font-size: 20px;
+      letter-spacing: 3px;
+      color: #ffe08a;
+      z-index: 30;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s;
+      text-align: center;
+    }
+
+    #stage-clear-banner.show { opacity: 1; }
+
+    /* ── 게임 종료 오버레이 ── */
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85);
+      z-index: 50; opacity: 0; pointer-events: none;
+      transition: opacity 0.5s ease;
+    }
+
+    #overlay.visible { opacity:1; pointer-events:all; }
+
+    #overlay-title {
+      font-size: 48px; letter-spacing: 5px;
+      margin-bottom: 8px;
+      text-shadow: 0 0 40px currentColor;
+    }
+
+    #overlay-title.win  { color: #ffe08a; }
+    #overlay-title.lose { color: #ff4444; }
+
+    #overlay-sub {
+      font-size: 13px; color: rgba(255,255,255,0.5);
+      margin-bottom: 8px; letter-spacing: 2px;
+    }
+
+    #overlay-score {
+      font-size: 28px; color: #ffe08a;
+      margin-bottom: 4px; letter-spacing: 3px;
+    }
+
+    #overlay-rank {
+      font-size: 12px; color: rgba(255,200,100,0.6);
+      margin-bottom: 24px; letter-spacing: 2px;
+    }
+
+    /* 랭킹 박스 */
+    #ranking-box {
+      background: rgba(10,10,20,0.92);
+      border: 1px solid rgba(255,180,60,0.22);
+      border-radius: 6px;
+      padding: 12px 20px;
+      margin-bottom: 22px;
+      min-width: 380px; max-height: 230px;
+      overflow-y: auto;
+    }
+
+    #ranking-box h3 {
+      font-size: 10px; letter-spacing: 3px;
+      color: rgba(255,180,60,0.55);
+      margin-bottom: 10px; text-align: center;
+    }
+
+    .rank-row {
+      display: flex; align-items: center;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 12px;
+    }
+
+    .rank-row:last-child { border-bottom: none; }
+    .rank-row.me { background: rgba(255,224,138,0.07); border-radius: 3px; padding: 4px 4px; }
+    .rank-num { width: 26px; color: rgba(255,180,60,0.5); font-size: 11px; }
+    .rank-num.top { color: #ffe08a; font-weight: bold; }
+    .rank-name { flex:1; padding: 0 8px; }
+    .rank-score { color: #ffe08a; font-weight: bold; min-width: 72px; text-align: right; }
+    .rank-badge { font-size: 10px; margin-left: 8px; min-width: 60px; text-align: right; }
+    .rank-badge.win  { color: #44ff88; }
+    .rank-badge.lose { color: #ff6644; }
+
+    #ranking-loading {
+      text-align: center; color: rgba(255,255,255,0.25);
+      font-size: 12px; padding: 12px;
+    }
+
+    /* 버튼 */
+    .overlay-btns { display: flex; gap: 12px; }
+
+    .overlay-btn {
+      padding: 11px 30px;
+      background: transparent;
+      font-family: inherit; font-size: 12px;
+      letter-spacing: 3px; cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    #restart-btn { border: 2px solid #ffe08a; color: #ffe08a; }
+    #restart-btn:hover { background: #ffe08a; color: #0a0a0f; }
+    #reload-rank-btn { border: 2px solid rgba(255,255,255,0.16); color: rgba(255,255,255,0.32); }
+    #reload-rank-btn:hover { border-color: rgba(255,255,255,0.4); color: rgba(255,255,255,0.6); }
+
+    /* ── 웨이브 배너 ── */
+    #wave-banner {
+      position: fixed; top: 88px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,180,60,0.1);
+      border: 1px solid rgba(255,180,60,0.4);
+      padding: 10px 30px;
+      font-size: 14px; letter-spacing: 2px; color: #ffe08a;
+      z-index: 10; opacity: 0; transition: opacity 0.4s;
+      pointer-events: none; text-align: center;
+      border-radius: 6px;
+    }
+
+    #wave-banner.show { opacity: 1; }
+
+    /* ── 조작법 ── */
+    #controls-hint {
+      position: fixed; bottom: 100px; left: 18px;
+      font-size: 10px; color: rgba(255,255,255,0.22);
+      line-height: 2; z-index: 10; pointer-events: none;
+    }
+
+    /* ── API 상태 ── */
+    #api-status {
+      position: fixed; bottom: 20px; right: 18px;
+      font-size: 10px; color: rgba(255,255,255,0.18);
+      letter-spacing: 1px; z-index: 10; pointer-events: none;
+    }
+
+    #api-status.connected { color: rgba(80,255,130,0.45); }
+    #api-status.local     { color: rgba(255,200,60,0.35); }
+  </style>
+</head>
+<body>
+
+  <!-- ── 시작 화면 ── -->
+  <div id="nickname-screen">
+    <h1>막아라!</h1>
+    <div class="sub-title">TOWER DEFENSE</div>
+    <div class="stage-info">▸ 30 STAGES  |  3 TOWER TYPES  |  BOSS WAVES</div>
+    <input
+      id="nickname-input"
+      type="text"
+      placeholder="닉네임을 입력하세요"
+      maxlength="10"
+      autocomplete="off"
+    />
+    <button id="start-btn" onclick="startGame()">게임 시작</button>
+  </div>
+
+  <!-- Three.js 캔버스 -->
+  <div id="game-container"></div>
+
+  <!-- HUD 상단 -->
+  <div id="hud">
+    <div class="hud-panel">
+      <div class="hud-label">🏰 성 HP</div>
+      <div class="hud-value" id="castle-hp-value">100</div>
+      <div id="castle-hp-bar-wrap"><div id="castle-hp-bar"></div></div>
+    </div>
+
+    <div class="hud-panel" id="hud-center">
+      <div id="stage-display">STAGE 1</div>
+      <div class="hud-label" style="margin-top:2px">⏱ 남은 시간</div>
+      <div id="timer-display">1:30</div>
+    </div>
+
+    <div class="hud-panel">
+      <div class="hud-label">💀 처치</div>
+      <div class="hud-value" id="kill-count">0</div>
+    </div>
+  </div>
+
+  <!-- 타워 선택 UI -->
+  <div id="tower-select">
+    <button class="tower-btn basic selected" data-type="basic"
+      onclick="selectTower('basic')">
+      <div class="btn-name">⬜ 기본</div>
+      <div class="btn-desc">범용 / 사거리 8</div>
+    </button>
+    <button class="tower-btn sniper" data-type="sniper"
+      onclick="selectTower('sniper')">
+      <div class="btn-name">🔵 저격</div>
+      <div class="btn-desc">장거리 / 강타</div>
+    </button>
+    <button class="tower-btn splash" data-type="splash"
+      onclick="selectTower('splash')">
+      <div class="btn-name">🔴 범위</div>
+      <div class="btn-desc">광역 / 단거리</div>
+    </button>
+  </div>
+
+  <!-- 웨이브 배너 -->
+  <div id="wave-banner"></div>
+
+  <!-- 스테이지 클리어 배너 -->
+  <div id="stage-clear-banner"></div>
+
+  <!-- 게임 종료 오버레이 -->
+  <div id="overlay">
+    <div id="overlay-title" class="win">승리!</div>
+    <div id="overlay-sub"></div>
+    <div id="overlay-score">0 점</div>
+    <div id="overlay-rank">전체 순위: 집계 중...</div>
+
+    <div id="ranking-box">
+      <h3>🏆 TOP RANKING</h3>
+      <div id="ranking-list">
+        <div id="ranking-loading">랭킹 불러오는 중...</div>
+      </div>
+    </div>
+
+    <div class="overlay-btns">
+      <button class="overlay-btn" id="restart-btn" onclick="restartGame()">다시 시작</button>
+      <button class="overlay-btn" id="reload-rank-btn" onclick="reloadRanking()">랭킹 새로고침</button>
+    </div>
+  </div>
+
+  <!-- 조작법 -->
+  <div id="controls-hint">
+    ↑↓←→ / WASD  이동<br>
+    초록 구역 클릭  타워 설치<br>
+    우클릭 드래그  카메라<br>
+    휠  줌 인/아웃
+  </div>
+
+  <div id="api-status">● LOCAL MODE</div>
+
+  <!-- 스크립트 (순서 중요!) -->
+  <script src="player.js"></script>
+  <script src="enemy.js"></script>
+  <script src="tower.js"></script>
+  <script src="api.js"></script>
+  <script src="game.js"></script>
+  <script src="main.js"></script>
+
+  <script>
+    // Enter 키로 시작
+    document.getElementById('nickname-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') startGame();
+    });
+
+    function startGame() {
+      const raw = document.getElementById('nickname-input').value.trim();
+      window.playerNickname = raw || '익명의 용사';
+      document.getElementById('nickname-screen').style.display = 'none';
+      if (typeof window.initGame === 'function') window.initGame();
+    }
+
+    function restartGame() {
+      if (window._gameManager) window._gameManager.restart();
+    }
+
+    async function reloadRanking() {
+      if (window._gameManager) {
+        await window._gameManager.loadAndShowRanking(window.playerNickname, null);
+      }
+    }
+
+    // 타워 타입 선택
+    function selectTower(type) {
+      if (window._gameManager) {
+        window._gameManager.towerMgr.selectType(type);
+      }
+    }
+  </script>
+
+</body>
+</html>
